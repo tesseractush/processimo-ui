@@ -1,5 +1,7 @@
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
+import { Strategy as GoogleStrategy } from "passport-google-oauth20";
+import { Strategy as GitHubStrategy } from "passport-github2";
 import { Express } from "express";
 import session from "express-session";
 import { scrypt, randomBytes, timingSafeEqual } from "crypto";
@@ -68,6 +70,115 @@ export function setupAuth(app: Express) {
       },
     ),
   );
+  
+  // Google OAuth strategy
+  passport.use(
+    new GoogleStrategy(
+      {
+        clientID: process.env.GOOGLE_CLIENT_ID!,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+        callbackURL: "/api/auth/google/callback",
+        scope: ["profile", "email"],
+      },
+      async (accessToken: string, refreshToken: string, profile: any, done: (error: any, user?: any) => void) => {
+        try {
+          // Check if user already exists with this Google ID
+          const email = profile.emails && profile.emails[0]?.value;
+          
+          if (!email) {
+            return done(new Error("Email not provided by Google"));
+          }
+          
+          let user = await storage.getUserByEmail(email);
+          
+          if (user) {
+            // User exists, log them in
+            return done(null, user);
+          } else {
+            // Create a new user with Google profile data
+            const firstName = profile.name?.givenName || "";
+            const lastName = profile.name?.familyName || "";
+            const username = `google_${profile.id}`;
+            
+            // Generate a random secure password for the user
+            // They won't use this password since they'll login via Google
+            const randomPassword = randomBytes(16).toString("hex");
+            
+            user = await storage.createUser({
+              username,
+              email,
+              password: await hashPassword(randomPassword),
+              firstName,
+              lastName,
+              role: UserRole.USER,
+            });
+            
+            return done(null, user);
+          }
+        } catch (error) {
+          return done(error);
+        }
+      }
+    )
+  );
+  
+  // GitHub OAuth strategy
+  passport.use(
+    new GitHubStrategy(
+      {
+        clientID: process.env.GITHUB_CLIENT_ID!,
+        clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+        callbackURL: "/api/auth/github/callback",
+        scope: ["user:email"],
+      },
+      async (accessToken: string, refreshToken: string, profile: any, done: (error: any, user?: any) => void) => {
+        try {
+          // GitHub might not provide email directly in profile
+          // We use the primary email from the emails array
+          const emails = profile.emails;
+          const email = emails && emails.find((e: any) => e.primary)?.value || 
+                         emails?.[0]?.value || 
+                         `${profile.username}@github.user`;
+          
+          let user = await storage.getUserByEmail(email);
+          
+          if (user) {
+            // User exists, log them in
+            return done(null, user);
+          } else {
+            // Parse name into firstName and lastName if available
+            let firstName = "";
+            let lastName = "";
+            
+            if (profile.displayName) {
+              const nameParts = profile.displayName.split(" ");
+              firstName = nameParts[0] || "";
+              lastName = nameParts.slice(1).join(" ") || "";
+            }
+            
+            // Use GitHub username if available, otherwise create one
+            const username = profile.username || `github_${profile.id}`;
+            
+            // Generate a random secure password for the user
+            const randomPassword = randomBytes(16).toString("hex");
+            
+            user = await storage.createUser({
+              username,
+              email,
+              password: await hashPassword(randomPassword),
+              firstName,
+              lastName,
+              role: UserRole.USER,
+            });
+            
+            return done(null, user);
+          }
+        } catch (error) {
+          return done(error);
+        }
+      }
+    )
+  );
 
   passport.serializeUser((user, done) => done(null, user.id));
   passport.deserializeUser(async (id: number, done) => {
@@ -120,7 +231,7 @@ export function setupAuth(app: Express) {
 
   // Login endpoint
   app.post("/api/login", (req, res, next) => {
-    passport.authenticate("local", (err, user, info) => {
+    passport.authenticate("local", (err: any, user: any, info: any) => {
       if (err) return next(err);
       if (!user) {
         return res.status(401).json({ message: info?.message || "Authentication failed" });
@@ -160,4 +271,30 @@ export function setupAuth(app: Express) {
     }
     next();
   });
+  
+  // Google OAuth routes
+  app.get("/api/auth/google", passport.authenticate("google", { scope: ["profile", "email"] }));
+  
+  app.get(
+    "/api/auth/google/callback",
+    passport.authenticate("google", { 
+      failureRedirect: "/auth?error=google-auth-failed"
+    }),
+    (req, res) => {
+      res.redirect("/");
+    }
+  );
+  
+  // GitHub OAuth routes
+  app.get("/api/auth/github", passport.authenticate("github", { scope: ["user:email"] }));
+  
+  app.get(
+    "/api/auth/github/callback",
+    passport.authenticate("github", { 
+      failureRedirect: "/auth?error=github-auth-failed"
+    }),
+    (req, res) => {
+      res.redirect("/");
+    }
+  );
 }

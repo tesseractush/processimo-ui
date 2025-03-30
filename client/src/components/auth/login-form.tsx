@@ -31,17 +31,11 @@ export default function LoginForm() {
   };
 
   const handleGoogleLogin = () => {
-    toast({
-      title: "Google login",
-      description: "Google OAuth login is coming soon",
-    });
+    window.location.href = "/api/auth/google";
   };
 
   const handleGithubLogin = () => {
-    toast({
-      title: "GitHub login",
-      description: "GitHub OAuth login is coming soon",
-    });
+    window.location.href = "/api/auth/github";
   };
 
   return (

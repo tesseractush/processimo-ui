@@ -49,17 +49,11 @@ export default function SignupForm() {
   };
 
   const handleGoogleSignup = () => {
-    toast({
-      title: "Google signup",
-      description: "Google OAuth signup is coming soon",
-    });
+    window.location.href = "/api/auth/google";
   };
 
   const handleGithubSignup = () => {
-    toast({
-      title: "GitHub signup",
-      description: "GitHub OAuth signup is coming soon",
-    });
+    window.location.href = "/api/auth/github";
   };
 
   return (
