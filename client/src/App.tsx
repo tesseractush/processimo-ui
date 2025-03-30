@@ -12,12 +12,20 @@ import TeamsPage from "@/pages/teams-page";
 import ProfilePage from "@/pages/profile-page";
 import BillingPage from "@/pages/billing-page";
 import SettingsPage from "@/pages/settings-page";
+import AdminDashboard from "@/pages/admin/admin-dashboard";
+import AdminAgents from "@/pages/admin/admin-agents";
+import AdminWorkflowRequests from "@/pages/admin/admin-workflow-requests";
 import { ProtectedRoute } from "./lib/protected-route";
+import { AdminRoute } from "./lib/admin-route";
+import { AuthProvider } from "./hooks/use-auth";
 
 function Router() {
   return (
     <Switch>
+      {/* Public Routes */}
       <Route path="/auth" component={AuthPage} />
+      
+      {/* User Routes */}
       <ProtectedRoute path="/" component={HomePage} />
       <ProtectedRoute path="/agents" component={AgentsPage} />
       <ProtectedRoute path="/marketplace" component={MarketplacePage} />
@@ -26,6 +34,13 @@ function Router() {
       <ProtectedRoute path="/profile" component={ProfilePage} />
       <ProtectedRoute path="/billing" component={BillingPage} />
       <ProtectedRoute path="/settings" component={SettingsPage} />
+      
+      {/* Admin Routes */}
+      <AdminRoute path="/admin" component={AdminDashboard} />
+      <AdminRoute path="/admin/agents" component={AdminAgents} />
+      <AdminRoute path="/admin/workflow-requests" component={AdminWorkflowRequests} />
+      
+      {/* 404 Not Found */}
       <Route component={NotFound} />
     </Switch>
   );
@@ -34,8 +49,10 @@ function Router() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <Router />
-      <Toaster />
+      <AuthProvider>
+        <Router />
+        <Toaster />
+      </AuthProvider>
     </QueryClientProvider>
   );
 }

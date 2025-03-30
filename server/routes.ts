@@ -144,6 +144,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Admin: Update agent
+  app.patch("/api/admin/agents/:id", async (req, res) => {
+    if (!req.isAuthenticated() || req.user.role !== "admin") {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    
+    const agentId = parseInt(req.params.id);
+    if (isNaN(agentId)) {
+      return res.status(400).json({ message: "Invalid agent ID" });
+    }
+    
+    try {
+      const agent = await storage.getAgentById(agentId);
+      if (!agent) {
+        return res.status(404).json({ message: "Agent not found" });
+      }
+      
+      const updatedAgent = await storage.updateAgent(agentId, req.body);
+      res.json(updatedAgent);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid agent data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to update agent" });
+    }
+  });
+
+  // Admin: Delete agent
+  app.delete("/api/admin/agents/:id", async (req, res) => {
+    if (!req.isAuthenticated() || req.user.role !== "admin") {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    
+    const agentId = parseInt(req.params.id);
+    if (isNaN(agentId)) {
+      return res.status(400).json({ message: "Invalid agent ID" });
+    }
+    
+    try {
+      const success = await storage.deleteAgent(agentId);
+      if (!success) {
+        return res.status(404).json({ message: "Agent not found" });
+      }
+      
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete agent" });
+    }
+  });
+
   // Admin: Get all workflow requests
   app.get("/api/admin/workflow-requests", async (req, res) => {
     if (!req.isAuthenticated() || req.user.role !== "admin") {
