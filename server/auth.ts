@@ -47,7 +47,8 @@ export function setupAuth(app: Express) {
     }
   };
 
-  app.set("trust proxy", 1);
+  // Trust proxy is needed for OAuth and sessions behind Replit proxy
+  app.set("trust proxy", true);
   app.use(session(sessionSettings));
   app.use(passport.initialize());
   app.use(passport.session());
@@ -77,8 +78,9 @@ export function setupAuth(app: Express) {
       {
         clientID: process.env.GOOGLE_CLIENT_ID!,
         clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-        callbackURL: "/api/auth/google/callback",
+        callbackURL: "https://processimo.replit.app/api/auth/google/callback",
         scope: ["profile", "email"],
+        proxy: true,
       },
       async (accessToken: string, refreshToken: string, profile: any, done: (error: any, user?: any) => void) => {
         try {
@@ -128,8 +130,9 @@ export function setupAuth(app: Express) {
       {
         clientID: process.env.GITHUB_CLIENT_ID!,
         clientSecret: process.env.GITHUB_CLIENT_SECRET!,
-        callbackURL: "/api/auth/github/callback",
+        callbackURL: "https://processimo.replit.app/api/auth/github/callback",
         scope: ["user:email"],
+        proxy: true,
       },
       async (accessToken: string, refreshToken: string, profile: any, done: (error: any, user?: any) => void) => {
         try {
