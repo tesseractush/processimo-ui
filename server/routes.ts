@@ -11,7 +11,7 @@ if (!process.env.STRIPE_SECRET_KEY) {
   throw new Error('Missing required Stripe secret: STRIPE_SECRET_KEY');
 }
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: "2023-10-16",
+  apiVersion: "2025-02-24.acacia",
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -19,6 +19,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
   setupAuth(app);
 
   // API Endpoints
+  
+  // Get all agent teams
+  app.get("/api/agent-teams", async (req, res) => {
+    try {
+      const teams = await storage.getAllAgentTeams();
+      res.json(teams);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch agent teams" });
+    }
+  });
+  
+  // Get featured agent teams
+  app.get("/api/agent-teams/featured", async (req, res) => {
+    try {
+      const featuredTeams = await storage.getFeaturedAgentTeams();
+      res.json(featuredTeams);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch featured agent teams" });
+    }
+  });
+  
+  // Get specific agent team
+  app.get("/api/agent-teams/:id", async (req, res) => {
+    const teamId = parseInt(req.params.id);
+    if (isNaN(teamId)) {
+      return res.status(400).json({ message: "Invalid team ID" });
+    }
+    
+    try {
+      const team = await storage.getAgentTeamById(teamId);
+      if (!team) {
+        return res.status(404).json({ message: "Agent team not found" });
+      }
+      
+      // Get agents in this team
+      const agents = await storage.getTeamAgents(teamId);
+      
+      res.json({ team, agents });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch agent team" });
+    }
+  });
   
   // Get all agents
   app.get("/api/agents", async (req, res) => {
