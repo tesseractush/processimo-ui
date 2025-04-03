@@ -156,7 +156,10 @@ export default function SignupForm() {
           <div className="flex items-center space-x-2">
             <Checkbox 
               id="terms" 
-              {...form.register("terms")}
+              checked={form.watch("terms")}
+              onCheckedChange={(checked) => {
+                form.setValue("terms", checked === true, { shouldValidate: true });
+              }}
             />
             <Label htmlFor="terms" className="text-sm text-gray-600">
               I agree to the <a href="#" className="text-blue-600 hover:underline">Terms</a> and <a href="#" className="text-blue-600 hover:underline">Privacy Policy</a>
