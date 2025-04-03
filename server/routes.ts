@@ -4,6 +4,15 @@ import { setupAuth } from "./auth";
 import { storage } from "./storage";
 import { insertAgentSchema, insertWorkflowRequestSchema } from "@shared/schema";
 import { z } from "zod";
+import Stripe from "stripe";
+
+// Initialize Stripe
+if (!process.env.STRIPE_SECRET_KEY) {
+  throw new Error('Missing required Stripe secret: STRIPE_SECRET_KEY');
+}
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+  apiVersion: "2023-10-16",
+});
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Set up authentication routes (/api/register, /api/login, /api/logout, /api/user)
@@ -44,9 +53,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to fetch user agents" });
     }
   });
+  
+  // Get user's subscriptions
+  app.get("/api/user/subscriptions", async (req, res) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    try {
+      const subscriptions = await storage.getUserSubscriptions(req.user.id);
+      res.json(subscriptions);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch user subscriptions" });
+    }
+  });
 
-  // Subscribe to an agent
-  app.post("/api/agents/:id/subscribe", async (req, res) => {
+  // Create Stripe payment intent for agent subscription
+  app.post("/api/agents/:id/create-payment-intent", async (req, res) => {
     if (!req.isAuthenticated()) {
       return res.status(401).json({ message: "Unauthorized" });
     }
@@ -69,17 +92,128 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Already subscribed to this agent" });
       }
       
-      // Create subscription
+      // Create Stripe payment intent
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: agent.price, // Agent price is already in cents
+        currency: "usd",
+        metadata: {
+          userId: req.user.id.toString(),
+          agentId: agentId.toString(),
+          productName: agent.name
+        }
+      });
+      
+      // Create a pending subscription
       const subscription = await storage.createSubscription({
         userId: req.user.id,
         agentId: agentId,
-        status: "active",
+        status: "pending",
         startDate: new Date(),
+        stripePaymentIntentId: paymentIntent.id
       });
       
-      res.status(201).json(subscription);
+      // Update the subscription with payment intent
+      await storage.updateSubscriptionStripeInfo(subscription.id, {
+        stripePaymentIntentId: paymentIntent.id
+      });
+      
+      res.status(201).json({ 
+        clientSecret: paymentIntent.client_secret,
+        subscriptionId: subscription.id
+      });
     } catch (error) {
-      res.status(500).json({ message: "Failed to subscribe to agent" });
+      res.status(500).json({ message: "Failed to create payment for agent subscription" });
+    }
+  });
+  
+  // Complete agent subscription after payment
+  app.post("/api/subscriptions/:id/complete", async (req, res) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    const subscriptionId = parseInt(req.params.id);
+    if (isNaN(subscriptionId)) {
+      return res.status(400).json({ message: "Invalid subscription ID" });
+    }
+    
+    const { paymentIntentId } = req.body;
+    if (!paymentIntentId) {
+      return res.status(400).json({ message: "Payment intent ID is required" });
+    }
+    
+    try {
+      // Retrieve the payment intent from Stripe to confirm payment
+      const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+      
+      if (paymentIntent.status !== 'succeeded') {
+        return res.status(400).json({ message: "Payment has not been completed" });
+      }
+      
+      // Get subscription
+      const subscription = await storage.getSubscriptionById(subscriptionId);
+      if (!subscription) {
+        return res.status(404).json({ message: "Subscription not found" });
+      }
+      
+      // Update subscription with payment info
+      await storage.updateSubscriptionStripeInfo(subscriptionId, {
+        stripePaymentIntentId: paymentIntentId
+      });
+      
+      // Update subscription status separately
+      const updatedSubscription = await storage.updateSubscriptionStatus(subscriptionId, "active");
+      
+      // Ensure user has a Stripe customer ID
+      if (!req.user.stripeCustomerId) {
+        // Create a Stripe customer
+        const customer = await stripe.customers.create({
+          name: req.user.username,
+          email: req.user.email,
+          metadata: {
+            userId: req.user.id.toString()
+          }
+        });
+        
+        // Update user with Stripe customer ID
+        await storage.updateUserStripeInfo(req.user.id, {
+          stripeCustomerId: customer.id
+        });
+      }
+      
+      res.status(200).json(updatedSubscription);
+    } catch (error) {
+      console.error('Subscription completion error:', error);
+      res.status(500).json({ message: "Failed to complete subscription" });
+    }
+  });
+  
+  // Cancel subscription
+  app.post("/api/subscriptions/:id/cancel", async (req, res) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    const subscriptionId = parseInt(req.params.id);
+    if (isNaN(subscriptionId)) {
+      return res.status(400).json({ message: "Invalid subscription ID" });
+    }
+    
+    try {
+      const canceledSubscription = await storage.cancelSubscription(subscriptionId);
+      if (!canceledSubscription) {
+        return res.status(404).json({ message: "Subscription not found" });
+      }
+      
+      // If there's a Stripe subscription ID, cancel it in Stripe too
+      if (canceledSubscription.stripeSubscriptionId) {
+        await stripe.subscriptions.cancel(canceledSubscription.stripeSubscriptionId);
+      }
+      
+      res.status(200).json(canceledSubscription);
+    } catch (error) {
+      console.error('Subscription cancellation error:', error);
+      res.status(500).json({ message: "Failed to cancel subscription" });
     }
   });
 

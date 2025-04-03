@@ -3,21 +3,83 @@ import Sidebar from "@/components/layout/sidebar";
 import MobileMenu from "@/components/layout/mobile-menu";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { useQuery } from "@tanstack/react-query";
+import { Badge } from "@/components/ui/badge";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { Agent } from "@shared/schema";
+import { Agent, Subscription } from "@shared/schema";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { Link } from "wouter";
 
 export default function BillingPage() {
   const { user } = useAuth();
+  const { toast } = useToast();
   
-  const { data: userAgents, isLoading } = useQuery({
+  // Fetch user's subscribed agents
+  const { data: userAgents = [], isLoading: isLoadingAgents } = useQuery({
     queryKey: ["/api/user/agents"],
+    select: (data) => data || []
+  });
+  
+  // Fetch user's subscriptions
+  const { data: userSubscriptions = [], isLoading: isLoadingSubs } = useQuery({
+    queryKey: ["/api/user/subscriptions"],
+    select: (data) => data || []
   });
   
   // Calculate total monthly cost
-  const totalMonthlyCost = userAgents
+  const totalMonthlyCost = Array.isArray(userAgents) 
     ? userAgents.reduce((total: number, agent: Agent) => total + (agent.price || 0), 0) / 100
     : 0;
+  
+  // Cancel subscription mutation
+  const cancelSubscriptionMutation = useMutation({
+    mutationFn: async (subscriptionId: number) => {
+      const res = await apiRequest("POST", `/api/subscriptions/${subscriptionId}/cancel`);
+      return await res.json();
+    },
+    onSuccess: () => {
+      // Invalidate queries to refresh data
+      queryClient.invalidateQueries({ queryKey: ["/api/user/agents"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/user/subscriptions"] });
+      
+      toast({
+        title: "Subscription canceled",
+        description: "Your subscription has been successfully canceled.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error canceling subscription",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  });
+  
+  // Function to find subscription by agent ID
+  const findSubscription = (agentId: number) => {
+    if (!Array.isArray(userSubscriptions)) return null;
+    return userSubscriptions.find(
+      (sub: Subscription) => sub.agentId === agentId && sub.status === "active"
+    );
+  };
+  
+  // Handle subscription cancellation
+  const handleCancelSubscription = (agentId: number) => {
+    const subscription = findSubscription(agentId);
+    if (subscription) {
+      cancelSubscriptionMutation.mutate(subscription.id);
+    } else {
+      toast({
+        title: "Error",
+        description: "Could not find active subscription for this agent.",
+        variant: "destructive",
+      });
+    }
+  };
+  
+  const isLoading = isLoadingAgents || isLoadingSubs;
   
   return (
     <div className="flex h-screen bg-gray-100">
@@ -65,7 +127,7 @@ export default function BillingPage() {
                       ${totalMonthlyCost.toFixed(2)}
                     </div>
                     <p className="text-sm text-gray-600">
-                      Based on {userAgents?.length || 0} active agent{userAgents?.length !== 1 ? 's' : ''}
+                      Based on {Array.isArray(userAgents) ? userAgents.length : 0} active agent{Array.isArray(userAgents) && userAgents.length !== 1 ? 's' : ''}
                     </p>
                   </>
                 )}
@@ -98,7 +160,7 @@ export default function BillingPage() {
                 <div className="flex justify-center py-6">
                   <Loader2 className="h-6 w-6 animate-spin text-primary" />
                 </div>
-              ) : userAgents && userAgents.length > 0 ? (
+              ) : Array.isArray(userAgents) && userAgents.length > 0 ? (
                 <div className="space-y-4">
                   {userAgents.map((agent: Agent) => (
                     <div key={agent.id} className="flex items-center justify-between p-4 border rounded-lg">
@@ -115,8 +177,14 @@ export default function BillingPage() {
                         <p className="text-sm font-medium text-gray-900">
                           ${(agent.price / 100).toFixed(2)}/month
                         </p>
-                        <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-700 hover:bg-red-50 mt-1">
-                          Cancel
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="text-red-600 hover:text-red-700 hover:bg-red-50 mt-1"
+                          onClick={() => handleCancelSubscription(agent.id)}
+                          disabled={cancelSubscriptionMutation.isPending}
+                        >
+                          {cancelSubscriptionMutation.isPending ? "Canceling..." : "Cancel"}
                         </Button>
                       </div>
                     </div>
@@ -125,9 +193,9 @@ export default function BillingPage() {
               ) : (
                 <div className="text-center py-6">
                   <p className="text-gray-600 mb-4">You don't have any active subscriptions.</p>
-                  <Button onClick={() => window.location.href = '/marketplace'}>
-                    Browse Marketplace
-                  </Button>
+                  <Link href="/marketplace">
+                    <Button>Browse Marketplace</Button>
+                  </Link>
                 </div>
               )}
             </CardContent>

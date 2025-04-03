@@ -1,71 +1,136 @@
 import { useAuth } from "@/hooks/use-auth";
 import Sidebar from "@/components/layout/sidebar";
 import MobileMenu from "@/components/layout/mobile-menu";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Loader2, Search } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Agent } from "@shared/schema";
-import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useToast } from "@/hooks/use-toast";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
-import { Search } from "lucide-react";
+import AgentSubscription from "@/components/marketplace/agent-subscription";
+import { queryClient } from "@/lib/queryClient";
+import { check_secrets } from "@/lib/check-secrets";
 
 export default function MarketplacePage() {
   const { user } = useAuth();
-  const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
   
-  const { data: agents, isLoading } = useQuery({
+  const { data: agents = [], isLoading } = useQuery({
     queryKey: ["/api/agents"],
+    select: (data) => data || []
   });
   
-  const { data: userAgents } = useQuery({
+  const { data: userAgents = [], isLoading: isLoadingUserAgents } = useQuery({
     queryKey: ["/api/user/agents"],
+    select: (data) => data || []
   });
   
-  const subscribeMutation = useMutation({
-    mutationFn: async (agentId: number) => {
-      const res = await apiRequest("POST", `/api/agents/${agentId}/subscribe`);
-      return await res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/user/agents"] });
-      toast({
-        title: "Subscription successful",
-        description: "You have successfully subscribed to this agent.",
-      });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Subscription failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
+  // Check if Stripe key is available
+  const [stripeKeyChecked, setStripeKeyChecked] = useState(false);
+  const [stripeKeyAvailable, setStripeKeyAvailable] = useState(false);
   
-  const filteredAgents = searchQuery && agents 
-    ? agents.filter((agent: Agent) => 
-        agent.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-        agent.description.toLowerCase().includes(searchQuery.toLowerCase()) || 
-        agent.category.toLowerCase().includes(searchQuery.toLowerCase())
-      )
+  useEffect(() => {
+    const checkStripeKey = async () => {
+      if (!stripeKeyChecked) {
+        try {
+          const keyAvailable = import.meta.env.VITE_STRIPE_PUBLIC_KEY;
+          setStripeKeyAvailable(!!keyAvailable);
+        } catch (error) {
+          setStripeKeyAvailable(false);
+        }
+        setStripeKeyChecked(true);
+      }
+    };
+    
+    checkStripeKey();
+  }, [stripeKeyChecked]);
+  
+  const filteredAgents = searchQuery ? 
+    agents.filter((agent: Agent) => 
+      agent.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+      agent.description.toLowerCase().includes(searchQuery.toLowerCase()) || 
+      agent.category.toLowerCase().includes(searchQuery.toLowerCase())
+    )
     : agents;
   
   const isSubscribed = (agentId: number) => {
-    return userAgents?.some((agent: Agent) => agent.id === agentId);
+    return userAgents.some((agent: Agent) => agent.id === agentId);
   };
   
-  const categories = agents 
-    ? [...new Set(agents.map((agent: Agent) => agent.category))]
-    : [];
+  // Safely create categories array
+  const categoriesSet = new Set<string>();
+  agents.forEach((agent: Agent) => {
+    if (agent.category) {
+      categoriesSet.add(agent.category);
+    }
+  });
+  const categories = Array.from(categoriesSet);
   
-  const handleSubscribe = (agentId: number) => {
-    subscribeMutation.mutate(agentId);
+  const handleSubscriptionComplete = () => {
+    // Refresh user agents data
+    queryClient.invalidateQueries({ queryKey: ["/api/user/agents"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/user/subscriptions"] });
+  };
+  
+  // Agent card component to avoid duplication
+  const AgentCard = ({ agent }: { agent: Agent }) => {
+    return (
+      <Card key={agent.id} className="overflow-hidden">
+        <div className={`h-3 bg-gradient-to-r ${agent.gradientClass}`}></div>
+        <CardHeader className="p-6 pb-3">
+          <div className="flex items-center mb-3">
+            <div className={`h-12 w-12 rounded-full ${agent.iconBgClass} flex items-center justify-center`}>
+              <i className={`bx ${agent.iconClass} text-xl text-primary`}></i>
+            </div>
+            <div className="ml-3">
+              <CardTitle>{agent.name}</CardTitle>
+              <div className="flex items-center mt-1">
+                {agent.isPopular && (
+                  <Badge className="bg-green-100 text-green-800 hover:bg-green-200">Popular</Badge>
+                )}
+                {agent.isNew && (
+                  <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-200 ml-2">New</Badge>
+                )}
+                {agent.isEnterprise && (
+                  <Badge className="bg-purple-100 text-purple-800 hover:bg-purple-200 ml-2">Enterprise</Badge>
+                )}
+              </div>
+            </div>
+          </div>
+          <CardDescription>{agent.description}</CardDescription>
+        </CardHeader>
+        <CardContent className="p-6 pt-0">
+          <div className="flex items-center justify-between mb-4">
+            <span className="text-sm font-medium text-gray-900">
+              ${(agent.price / 100).toFixed(2)}/month
+            </span>
+            <Badge variant="outline">{agent.category}</Badge>
+          </div>
+          <div className="mt-2 mb-4">
+            <h3 className="text-sm font-medium text-gray-900">Features:</h3>
+            <p className="text-sm text-gray-600">{agent.features}</p>
+          </div>
+          
+          {stripeKeyAvailable ? (
+            <AgentSubscription
+              agent={agent}
+              isSubscribed={isSubscribed(agent.id)}
+              onSubscriptionComplete={handleSubscriptionComplete}
+            />
+          ) : (
+            <Button 
+              className="w-full"
+              disabled={true}
+            >
+              Stripe API Key Required
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+    );
   };
   
   return (
@@ -108,53 +173,7 @@ export default function MarketplacePage() {
               <TabsContent value="all">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {filteredAgents.map((agent: Agent) => (
-                    <Card key={agent.id} className="overflow-hidden">
-                      <div className={`h-3 bg-gradient-to-r ${agent.gradientClass}`}></div>
-                      <CardHeader className="p-6 pb-3">
-                        <div className="flex items-center mb-3">
-                          <div className={`h-12 w-12 rounded-full ${agent.iconBgClass} flex items-center justify-center`}>
-                            <i className={`bx ${agent.iconClass} text-xl text-primary`}></i>
-                          </div>
-                          <div className="ml-3">
-                            <CardTitle>{agent.name}</CardTitle>
-                            <div className="flex items-center mt-1">
-                              {agent.isPopular && (
-                                <Badge className="bg-green-100 text-green-800 hover:bg-green-200">Popular</Badge>
-                              )}
-                              {agent.isNew && (
-                                <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-200 ml-2">New</Badge>
-                              )}
-                              {agent.isEnterprise && (
-                                <Badge className="bg-purple-100 text-purple-800 hover:bg-purple-200 ml-2">Enterprise</Badge>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                        <CardDescription>{agent.description}</CardDescription>
-                      </CardHeader>
-                      <CardContent className="p-6 pt-0">
-                        <div className="flex items-center justify-between mb-4">
-                          <span className="text-sm font-medium text-gray-900">
-                            ${(agent.price / 100).toFixed(2)}/month
-                          </span>
-                          <Badge variant="outline">{agent.category}</Badge>
-                        </div>
-                        <div className="mt-2 mb-4">
-                          <h3 className="text-sm font-medium text-gray-900">Features:</h3>
-                          <p className="text-sm text-gray-600">{agent.features}</p>
-                        </div>
-                        <Button 
-                          className="w-full"
-                          onClick={() => handleSubscribe(agent.id)}
-                          disabled={isSubscribed(agent.id) || subscribeMutation.isPending}
-                        >
-                          {subscribeMutation.isPending && subscribeMutation.variables === agent.id ? (
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          ) : null}
-                          {isSubscribed(agent.id) ? 'Already Subscribed' : 'Subscribe'}
-                        </Button>
-                      </CardContent>
-                    </Card>
+                    <AgentCard key={agent.id} agent={agent} />
                   ))}
                 </div>
               </TabsContent>
@@ -165,52 +184,7 @@ export default function MarketplacePage() {
                     {filteredAgents
                       .filter((agent: Agent) => agent.category === category)
                       .map((agent: Agent) => (
-                        <Card key={agent.id} className="overflow-hidden">
-                          <div className={`h-3 bg-gradient-to-r ${agent.gradientClass}`}></div>
-                          <CardHeader className="p-6 pb-3">
-                            <div className="flex items-center mb-3">
-                              <div className={`h-12 w-12 rounded-full ${agent.iconBgClass} flex items-center justify-center`}>
-                                <i className={`bx ${agent.iconClass} text-xl text-primary`}></i>
-                              </div>
-                              <div className="ml-3">
-                                <CardTitle>{agent.name}</CardTitle>
-                                <div className="flex items-center mt-1">
-                                  {agent.isPopular && (
-                                    <Badge className="bg-green-100 text-green-800 hover:bg-green-200">Popular</Badge>
-                                  )}
-                                  {agent.isNew && (
-                                    <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-200 ml-2">New</Badge>
-                                  )}
-                                  {agent.isEnterprise && (
-                                    <Badge className="bg-purple-100 text-purple-800 hover:bg-purple-200 ml-2">Enterprise</Badge>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                            <CardDescription>{agent.description}</CardDescription>
-                          </CardHeader>
-                          <CardContent className="p-6 pt-0">
-                            <div className="flex items-center justify-between mb-4">
-                              <span className="text-sm font-medium text-gray-900">
-                                ${(agent.price / 100).toFixed(2)}/month
-                              </span>
-                            </div>
-                            <div className="mt-2 mb-4">
-                              <h3 className="text-sm font-medium text-gray-900">Features:</h3>
-                              <p className="text-sm text-gray-600">{agent.features}</p>
-                            </div>
-                            <Button 
-                              className="w-full"
-                              onClick={() => handleSubscribe(agent.id)}
-                              disabled={isSubscribed(agent.id) || subscribeMutation.isPending}
-                            >
-                              {subscribeMutation.isPending && subscribeMutation.variables === agent.id ? (
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              ) : null}
-                              {isSubscribed(agent.id) ? 'Already Subscribed' : 'Subscribe'}
-                            </Button>
-                          </CardContent>
-                        </Card>
+                        <AgentCard key={agent.id} agent={agent} />
                       ))}
                   </div>
                 </TabsContent>

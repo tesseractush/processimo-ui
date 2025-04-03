@@ -48,6 +48,9 @@ export const subscriptions = pgTable("subscriptions", {
   status: text("status").notNull(), // active, canceled, expired
   startDate: timestamp("start_date").notNull().defaultNow(),
   endDate: timestamp("end_date"),
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  stripePaymentIntentId: text("stripe_payment_intent_id"),
+  stripePriceId: text("stripe_price_id"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -93,6 +96,9 @@ export const insertWorkflowRequestSchema = createInsertSchema(workflowRequests).
 
 // Type definitions
 export type InsertUser = z.infer<typeof insertUserSchema>;
+export type InsertAgent = z.infer<typeof insertAgentSchema>;
+export type InsertSubscription = z.infer<typeof insertSubscriptionSchema>;
+export type InsertWorkflowRequest = z.infer<typeof insertWorkflowRequestSchema>;
 export type User = typeof users.$inferSelect;
 export type Agent = typeof agents.$inferSelect;
 export type Subscription = typeof subscriptions.$inferSelect;

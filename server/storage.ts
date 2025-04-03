@@ -23,9 +23,12 @@ export interface IStorage {
 
   // Subscription methods
   getSubscription(userId: number, agentId: number): Promise<Subscription | undefined>;
+  getSubscriptionById(id: number): Promise<Subscription | undefined>;
   getUserSubscriptions(userId: number): Promise<Subscription[]>;
   createSubscription(subscription: InsertSubscription): Promise<Subscription>;
   cancelSubscription(id: number): Promise<Subscription | undefined>;
+  updateSubscriptionStatus(id: number, status: string): Promise<Subscription | undefined>;
+  updateSubscriptionStripeInfo(id: number, stripeInfo: { stripeSubscriptionId?: string, stripePaymentIntentId?: string, stripePriceId?: string }): Promise<Subscription | undefined>;
 
   // Workflow request methods
   createWorkflowRequest(request: InsertWorkflowRequest): Promise<WorkflowRequest>;
@@ -152,8 +155,11 @@ export class MemStorage implements IStorage {
       ...insertUser, 
       id, 
       createdAt: now,
-      stripeCustomerId: undefined,
-      stripeSubscriptionId: undefined
+      firstName: insertUser.firstName || null,
+      lastName: insertUser.lastName || null,
+      role: insertUser.role || "user",
+      stripeCustomerId: null,
+      stripeSubscriptionId: null
     };
     this.users.set(id, user);
     return user;
@@ -193,7 +199,15 @@ export class MemStorage implements IStorage {
   async createAgent(insertAgent: InsertAgent): Promise<Agent> {
     const id = this.agentId++;
     const now = new Date();
-    const agent: Agent = { ...insertAgent, id, createdAt: now };
+    const agent: Agent = { 
+      ...insertAgent, 
+      id, 
+      createdAt: now,
+      isPopular: insertAgent.isPopular || null,
+      isNew: insertAgent.isNew || null,
+      isEnterprise: insertAgent.isEnterprise || null,
+      createdBy: insertAgent.createdBy || null
+    };
     this.agents.set(id, agent);
     return agent;
   }
@@ -228,17 +242,45 @@ export class MemStorage implements IStorage {
       (sub) => sub.userId === userId && sub.agentId === agentId && sub.status === "active"
     );
   }
+  
+  async getSubscriptionById(id: number): Promise<Subscription | undefined> {
+    return this.subscriptions.get(id);
+  }
 
   async getUserSubscriptions(userId: number): Promise<Subscription[]> {
     return Array.from(this.subscriptions.values()).filter(
       (sub) => sub.userId === userId
     );
   }
+  
+  async updateSubscriptionStatus(id: number, status: string): Promise<Subscription | undefined> {
+    const subscription = this.subscriptions.get(id);
+    if (!subscription) {
+      return undefined;
+    }
+    
+    const updatedSubscription = { 
+      ...subscription, 
+      status
+    };
+    
+    this.subscriptions.set(id, updatedSubscription);
+    return updatedSubscription;
+  }
 
   async createSubscription(insertSubscription: InsertSubscription): Promise<Subscription> {
     const id = this.subscriptionId++;
     const now = new Date();
-    const subscription: Subscription = { ...insertSubscription, id, createdAt: now };
+    const subscription: Subscription = { 
+      ...insertSubscription, 
+      id, 
+      createdAt: now,
+      stripeSubscriptionId: insertSubscription.stripeSubscriptionId || null,
+      stripePaymentIntentId: insertSubscription.stripePaymentIntentId || null,
+      stripePriceId: insertSubscription.stripePriceId || null,
+      startDate: insertSubscription.startDate || now,
+      endDate: insertSubscription.endDate || null
+    };
     this.subscriptions.set(id, subscription);
     return subscription;
   }
@@ -258,12 +300,34 @@ export class MemStorage implements IStorage {
     this.subscriptions.set(id, updatedSubscription);
     return updatedSubscription;
   }
+  
+  async updateSubscriptionStripeInfo(id: number, stripeInfo: { stripeSubscriptionId?: string, stripePaymentIntentId?: string, stripePriceId?: string }): Promise<Subscription | undefined> {
+    const subscription = this.subscriptions.get(id);
+    if (!subscription) {
+      return undefined;
+    }
+    
+    const updatedSubscription = {
+      ...subscription,
+      stripeSubscriptionId: stripeInfo.stripeSubscriptionId || subscription.stripeSubscriptionId,
+      stripePaymentIntentId: stripeInfo.stripePaymentIntentId || subscription.stripePaymentIntentId,
+      stripePriceId: stripeInfo.stripePriceId || subscription.stripePriceId
+    };
+    
+    this.subscriptions.set(id, updatedSubscription);
+    return updatedSubscription;
+  }
 
   // Workflow request methods
   async createWorkflowRequest(insertRequest: InsertWorkflowRequest): Promise<WorkflowRequest> {
     const id = this.workflowRequestId++;
     const now = new Date();
-    const request: WorkflowRequest = { ...insertRequest, id, createdAt: now };
+    const request: WorkflowRequest = { 
+      ...insertRequest, 
+      id, 
+      createdAt: now,
+      integrations: insertRequest.integrations || null
+    };
     this.workflowRequests.set(id, request);
     return request;
   }
